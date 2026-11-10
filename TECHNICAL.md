@@ -686,13 +686,13 @@ either number is suspect regardless of what the Elo match says.
 
 *Review status (Nov 11, 2026): an external review produced 10 ranked
 proposals. Landed: style pre-roll (#1), clock-aware move retries +
-measured POST overhead (#8), doc-truth + history-aging (#9), and the
+measured POST overhead (#8), doc-truth + history-aging (#9), the
 measurement layer (#2) — `match.py` self-play harness with Elo/SPRT
-plus the `replay_blunders.py` regression suite (§5.7), so #3 (time
-management), #4 (pruning) and #5 (staged movegen) can now be landed
-only with a measured win. Q2 (verify-then-trust pondering) is
-deprioritized per review: a fresh search against a hot TT is already
-cheap.*
+plus the `replay_blunders.py` regression suite (§5.7) — and **#3 (soft
+time limits)**, shipped after a measured win in the blitz-clock
+harness (§5.1). #4 (pruning) and #5 (staged movegen) are in progress
+under the same gate. Q2 (verify-then-trust pondering) is deprioritized
+per review: a fresh search against a hot TT is already cheap.*
 
 1. Highest-leverage strength steps from here, given the ~1500–1550
    level and the pure-Python constraint: SEE for qsearch, better delta
