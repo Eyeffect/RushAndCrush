@@ -238,6 +238,20 @@ search, so a fresh dict invalidates it. Cleared every search.
   game so far; the search maintains `_rep_path` during recursion.
 - Iterative deepening 1..40. Root moves shuffled once per search (game
   variety), re-sorted by the previous depth's scores thereafter.
+- **Soft time limit (Batch C #3, measured):** a new depth is started only
+  if it is *predicted to finish* — the next iteration costs ≈1.6× the last
+  one, and if `now + 1.6 × last_depth_time` would overshoot the deadline,
+  the search stops and returns the last **completed** depth instead of
+  burning the clock on a partial iteration that gets thrown away.
+  Measured in the blitz-clock harness (`match.py --bank 180 --inc 2
+  --frac 0.05 --min-move 0.35 --max-move 8`): the old engine burned its
+  entire bank and **flagged in 24 of 32 games**; the new engine used
+  ~9% less clock and **never flagged** → **Elo −293 ± 166** for the old
+  engine. At shallow budgets (128 games) the change is strength-neutral
+  (−19 ± 60) with an identical blunder-replay profile (17/33), i.e. it
+  costs nothing and buys clock. A "stop when the best move looks stable"
+  variant was written and **rejected**: it needs depth ≥ 8, which
+  production budgets never reach, so it was unmeasurable and stayed out.
 - **Aspiration on beta only**: `beta = best_score + 40` from depth ≥ 3;
   a fail-high re-searches the same depth with an infinite window (exact
   scores are what the style layer needs).
