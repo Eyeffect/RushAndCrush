@@ -11,9 +11,16 @@ engine:
   # Our homemade engine. No Stockfish. All heart.
   min_time: 0.35        # seconds - never think less than this
   max_time: 8.0         # seconds - never think longer than this
-  time_fraction: 0.05   # fraction of remaining clock spent per move
+  time_fraction: 0.02   # fraction of remaining clock spent per move
                         # (network overhead is measured at runtime: an EMA
                         # of move-POST round-trips, see lichess_api.py)
+                        # 0.05 -> 0.02 after measurement: the greedy
+                        # policy burned the whole 180s clock by move ~30
+                        # in a 3+2 game, and 42% of our games reached
+                        # their endgame under 1s/move. In the blitz-clock
+                        # harness the thrifty policy flagged 0/24 games
+                        # where the greedy one flagged 12/24, and won the
+                        # chess-only games 7-5.
   ponder: true              # think on the opponent's clock (TT warming only)
   ponder_max_time: 10.0     # seconds a ponder search may run
   ponder_min_clock_ms: 10000  # only ponder when OUR clock still has this much
