@@ -132,9 +132,16 @@ def test_stores(tmp="data_test"):
 
     mem = HunterMemory(f"{tmp}/hunter.json")
     mem.remember_s = 60
+    mem.played_s = 7200
     mem.record_attempt("SomeBot")
     assert mem.recently_tried("SomeBot")
-    print("[ok] stores: stats, nemesis (h2h + avenged), hunter memory")
+    assert mem.last_tried("SomeBot") > 0
+    assert not mem.played_recently("SomeBot")
+    mem.record_played("SomeBot")
+    assert mem.played_recently("SomeBot")
+    mem.record_played("opponent")  # placeholder must be ignored
+    assert not mem.played_recently("opponent")
+    print("[ok] stores: stats, nemesis (h2h + avenged), hunter memory + rotation")
 
 
 def test_chat_pools():

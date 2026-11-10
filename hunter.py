@@ -37,6 +37,8 @@ class Hunter(threading.Thread):
         self.stores.nemesis.cooldown_s = self.nemesis_cooldown_min * 60
         self.stores.hunter.remember_s = float(
             self.cfg.get("challenge_timeout_min", 15)) * 60
+        self.stores.hunter.played_s = float(
+            self.cfg.get("played_cooldown_min", 120)) * 60
 
         self.last_challenge = 0.0
         self.my_rating: int | None = None
@@ -83,6 +85,9 @@ class Hunter(threading.Thread):
         """Revenge is bots-only and capped: humans get peace, and constant
         rated rematches with the same bot look like boosting. Returns True
         if a challenge went out."""
+        if self.stores.hunter.recently_tried(name) or \
+                self.stores.hunter.played_recently(name):
+            return False
         if not self._is_bot(name):
             log.info("Nemesis %s is not a bot - the soldier lets it go.", name)
             return False
@@ -113,6 +118,8 @@ class Hunter(threading.Thread):
                 continue
             if self.stores.hunter.recently_tried(name):
                 continue
+            if self.stores.hunter.played_recently(name):
+                continue
             blitz = (b.get("perfs") or {}).get("blitz") or {}
             rating, games = blitz.get("rating", 0), blitz.get("games", 0)
             if games < 5:  # no reliable rating yet
@@ -120,7 +127,18 @@ class Hunter(threading.Thread):
             if not (self.min_rating <= rating <= self.max_rating):
                 continue
             cands.append((name, rating))
-        return random.choice(cands) if cands else None
+        if not cands:
+            return None
+        # rotate faces: weight by how long since we last tried them, so
+        # the soldier tours the room instead of looping familiar names
+        now = time.time()
+        weights = []
+        for name, _rating in cands:
+            last = self.stores.hunter.last_tried(name)
+            stale = (now - last) if last else 86400.0
+            weights.append(max(stale, 1.0))
+        pick = random.choices(cands, weights=weights, k=1)[0]
+        return pick
 
     def _challenge(self, username: str, human: bool) -> None:
         tcs = self.cfg.get("time_controls", [[180, 0], [180, 2], [300, 0], [300, 3]])

@@ -81,23 +81,43 @@ class NemesisStore:
 
 
 class HunterMemory:
-    """Remembers recent outgoing challenges so we don't spam anyone."""
+    """Remembers recent outgoing challenges AND recent actual opponents,
+    so the soldier rotates faces instead of hammering the same names."""
 
     def __init__(self, path: str) -> None:
-        self.store = JsonStore(path, default={"tried": {}})
-        self.remember_s = 900  # don't re-challenge the same bot for 15 min
+        self.store = JsonStore(path, default={"tried": {}, "played": {}})
+        self.remember_s = 900   # don't re-challenge the same bot for 15 min
+        self.played_s = 7200    # don't re-challenge a recent opponent for 2 h
 
     def record_attempt(self, username: str) -> None:
         data = self.store.load()
-        data["tried"][username] = time.time()
-        # prune entries older than a day
-        cutoff = time.time() - 86400
-        data["tried"] = {u: t for u, t in data["tried"].items() if t > cutoff}
+        data.setdefault("tried", {})[username] = time.time()
+        data["tried"] = {u: t for u, t in data["tried"].items()
+                         if time.time() - t < 86400}
         self.store.save(data)
 
     def recently_tried(self, username: str) -> bool:
-        t = self.store.load()["tried"].get(username, 0)
+        t = self.store.load().get("tried", {}).get(username, 0)
         return time.time() - t < self.remember_s
+
+    def last_tried(self, username: str) -> float:
+        """Timestamp of the last outgoing challenge (0 = never tried)."""
+        return self.store.load().get("tried", {}).get(username, 0.0)
+
+    def record_played(self, username: str) -> None:
+        """A game actually happened - full cooldown, not just the 15-min
+        challenge memory (covers incoming games too)."""
+        if not username or username == "opponent":
+            return
+        data = self.store.load()
+        data.setdefault("played", {})[username] = time.time()
+        data["played"] = {u: t for u, t in data["played"].items()
+                          if time.time() - t < max(86400, 2 * self.played_s)}
+        self.store.save(data)
+
+    def played_recently(self, username: str) -> bool:
+        t = self.store.load().get("played", {}).get(username, 0)
+        return time.time() - t < self.played_s
 
 
 class StatsStore:

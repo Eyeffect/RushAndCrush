@@ -208,6 +208,7 @@ hunter:
   challenge_interval: 60      # min seconds between outgoing challenges
   idle_check: 15              # seconds between hunter ticks
   challenge_timeout_min: 15   # stop challenging an opponent who didn't accept, for N minutes
+  played_cooldown_min: 120    # don't re-challenge someone we just played for 2 hours (rotate faces)
   time_controls:              # random pick for outgoing challenges (limit+inc in seconds)
     - [180, 0]
     - [180, 2]

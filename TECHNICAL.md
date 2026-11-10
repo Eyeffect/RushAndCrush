@@ -434,8 +434,7 @@ soldier is loud but not rude.
 ### 5.4 Hunter (`hunter.py`) — matchmaking daemon
 
 Tick every 15s. Conditions to hunt: capacity (live games < `max_games`
-= **1**), ≥60s since last outgoing challenge, not paused by rate limit,
-challenged-timeout memory (15 min).
+= **1**), ≥60s since last outgoing challenge, not paused by rate limit.
 
 Why one game at a time: there is one engine and one `search_lock` —
 two simultaneous searches would halve each other's depth and, worse,
@@ -443,17 +442,24 @@ make ponder preemption meaningless. Serial games also make the learning
 signal cleaner. (The reader/worker split already tolerates concurrency;
 two handlers were run in testing without errors.)
 
-1. **Nemesis priority**: most-beaten opponent whose cooldown (30 min)
-   expired → challenge them again (bots rated; humans casual).
-2. Else: `GET /api/bot/online` (512) → filter: not self, not challenged
-   in the last 15 min, blitz rating reliable (≥5 games), rating within
-   window. Window starts 600–2200; once our own blitz rating has ≥5
-   games it re-centers to [own−250, own+350] (clamped, refreshed every
-   10 min). Provisional 3000 default ratings are ignored.
+1. **Nemesis priority**: most-beaten bot opponent whose cooldown (30 min,
+   from the loss) expired and who still leads the series → challenge
+   again, **only** if we haven't tried or played them recently and the
+   per-day rematch cap (2/day, bots-only, anti-boosting) allows it.
+   Humans get peace.
+2. Else: `GET /api/bot/online` (512) → filter: not self, not tried in
+   the last 15 min, not *played* in the last 2 h, blitz rating reliable
+   (≥5 games), rating within window. Window starts 600–2200; once our
+   own blitz rating has ≥5 games it re-centers to [own−250, own+350]
+   (clamped, refreshed every 10 min). Provisional 3000 default ratings
+   are ignored. Candidates are picked **weighted by staleness** (longest
+   since last challenge), so the soldier rotates faces instead of looping
+   familiar nicknames.
 3. Challenge: random time control from {[180,0],[180,2],[300,0],[300,3]},
    rated vs bots / casual vs humans, random color. Error carrying
    `ratelimit.seconds` (`bot.vsBot.day` daily cap) → pause hunting for
-   that duration.
+   that duration. Every finished game records the opponent in hunter
+   memory (`data/hunter.json`) so even incoming games enforce rotation.
 4. Incoming challenges (`decide_incoming`): non-standard variant →
    decline `standard`; ultraBullet/bullet/correspondence → decline
    `timeControl`; no capacity → `later`; bots → accept (rated fine);

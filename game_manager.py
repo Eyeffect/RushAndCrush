@@ -594,6 +594,10 @@ class GameHandler(threading.Thread):
             self.stores.nemesis.add_loss(self.opponent)
         elif result == "win":
             self.stores.nemesis.add_win(self.opponent)
+        # rotate opponents: a face we just fought goes on cooldown so the
+        # hunter tours the room instead of looping the same nicknames
+        if hasattr(self.stores, "hunter"):
+            self.stores.hunter.record_played(self.opponent)
 
         # hand the whole battle to the learner
         try:
