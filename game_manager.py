@@ -757,7 +757,11 @@ class GameHandler(threading.Thread):
             budget = min(budget, max(0.3, s / 25))
         if s < 5:
             budget = min(budget, 0.3)
-        think = budget - self.engine.overhead_s
+        # network overhead, measured: an EMA of real move-POST round-trips
+        # (clamped) replaces the fixed 300ms guess - a slow night buys
+        # less think time, a fast night banks it
+        ov = max(0.2, min(1.0, float(getattr(self.api, "move_overhead", 0.3))))
+        think = budget - ov
         if s < 0.8:
             # dead clock: live off the increment, absolute minimum think
             return max(0.1, min(think, s - 0.25))

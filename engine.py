@@ -278,7 +278,6 @@ class Engine:
         self.min_time = float(cfg.get("min_time", 0.35))
         self.max_time = float(cfg.get("max_time", 8.0))
         self.time_fraction = float(cfg.get("time_fraction", 0.05))
-        self.overhead_s = float(cfg.get("overhead_ms", 300)) / 1000.0
 
         self.tt: dict[tuple, tuple[int, int, int, chess.Move | None]] = {}
         self.killers: list[list[chess.Move | None]] = [[None, None] for _ in range(256)]
@@ -574,6 +573,11 @@ class Engine:
         self._eval_P = P
         self._eval_cache = {}
         self.killers = [[None, None] for _ in range(256)]
+        # history persists across searches (good ordering memory) but
+        # ages by halving, so bonuses earned in earlier games cannot
+        # outvote fresh ones forever
+        self.history = defaultdict(
+            int, {k: v >> 1 for k, v in self.history.items() if v > 1})
         self.nodes = 0
         self.stop_at = time.time() + max(0.05, budget_s)
         self._rep_hist = dict(rep_keys) if rep_keys else {}
@@ -924,18 +928,29 @@ class Engine:
         """Search, then optionally trade a little eval for extra violence.
 
         Only uses exact scores from the last fully completed depth.
+        The style dice are rolled BEFORE the search: on a miss (~75% of
+        moves) the root window tightens to best-1, so no ray is kept
+        open for rivals that will never be picked - measurably deeper
+        search, identical persona behavior. On a hit the search runs
+        with the full style slack, exactly as before.
         """
-        result = self.search(board, budget_s, persona, rep_keys)
-        if result["move"] is None:
-            return result
-
         p = persona or {}
         prob = float(p.get("style_pick_prob", 0.0))
+        style_ok = prob > 0 and random.random() < prob
+        if style_ok:
+            result = self.search(board, budget_s, persona, rep_keys)
+        else:
+            # fresh dict per call: same genes, zero slack. Identity is
+            # still stable within this one search, so the eval-cache
+            # binding stays correct.
+            result = self.search(board, budget_s,
+                                 dict(p, style_eval_slack=0), rep_keys)
+        if result["move"] is None or not style_ok:
+            return result
+
         slack = int(p.get("style_eval_slack", 40))
         top = result["top"]
-
-        if (prob > 0 and len(top) >= 2 and result["score"] > -300
-                and random.random() < prob):
+        if len(top) >= 2 and result["score"] > -300:
             best_score = top[0][1]
             rivals = [m for m, s in top[1:] if s >= best_score - slack]
             if rivals:

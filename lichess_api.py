@@ -17,6 +17,11 @@ log = logging.getLogger("rushandcrush.api")
 RETRY_DELAYS = (1, 2, 4, 8, 15)
 PAUSE_AFTER_429 = 60.0  # Lichess etiquette: one full minute after any 429
 MOVE_RETRY_DELAY = 2.0  # game moves retry fast - flagging is worse
+# Move POSTs get their own short ladder: a flaky night must never cost
+# 1+2+4+8+15s of wall clock on a 3+0 game. Worst case below is ~9s
+# including timeouts, after which the handler discards the eval and the
+# next gameState resyncs the board.
+MOVE_RETRY_DELAYS = (0.2, 0.5, 1.0)
 
 
 class TokenError(RuntimeError):
@@ -33,6 +38,10 @@ class LichessAPI:
         )
         self._pause_until = 0.0
         self._pause_lock = threading.Lock()
+        # EMA of measured move-POST round-trip (seconds). The time budget
+        # reads this instead of guessing a fixed 300ms: a slow night buys
+        # less think time, a fast night banks it.
+        self.move_overhead = 0.30
 
     # ---------------- low level ----------------
 
@@ -58,8 +67,11 @@ class LichessAPI:
                  params: dict | None = None, data=None, payload=None,
                  headers: dict | None = None, timeout: float = 10,
                  is_move: bool = False):
+        # moves walk the short ladder: on the clock, surrendering fast
+        # beats a doomed 30s retry march
+        delays = MOVE_RETRY_DELAYS if is_move else RETRY_DELAYS
         last_exc: Exception | None = None
-        for attempt, delay in enumerate((*RETRY_DELAYS, None)):
+        for attempt, delay in enumerate((*delays, None)):
             if not is_move:
                 self._wait_pause()
             try:
@@ -153,12 +165,17 @@ class LichessAPI:
     # ---------------- in-game actions ----------------
 
     def move(self, game_id: str, uci: str, offering_draw: bool = False) -> None:
+        t0 = time.time()
         self._post(
             f"/api/bot/game/{game_id}/move/{uci}",
             params={"offeringDraw": str(bool(offering_draw)).lower()},
-            timeout=5,
+            timeout=2.5,
             is_move=True,  # bypasses the global 429 pause
         )
+        # measure the round-trip into the EMA the time budget consumes
+        dt = time.time() - t0
+        self.move_overhead = max(0.15, min(1.5,
+                                           0.8 * self.move_overhead + 0.2 * dt))
 
     def resign(self, game_id: str) -> None:
         self._post(f"/api/bot/game/{game_id}/resign", timeout=5)

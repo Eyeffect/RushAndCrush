@@ -12,7 +12,8 @@ engine:
   min_time: 0.35        # seconds - never think less than this
   max_time: 8.0         # seconds - never think longer than this
   time_fraction: 0.05   # fraction of remaining clock spent per move
-  overhead_ms: 300      # safety margin for network + think time
+                        # (network overhead is measured at runtime: an EMA
+                        # of move-POST round-trips, see lichess_api.py)
   ponder: true              # think on the opponent's clock (TT warming only)
   ponder_max_time: 10.0     # seconds a ponder search may run
   ponder_min_clock_ms: 10000  # only ponder when OUR clock still has this much

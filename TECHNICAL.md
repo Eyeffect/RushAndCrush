@@ -3,8 +3,8 @@
 *Hand this document to a reviewer (human or LLM) alongside a request like:
 "Review this architecture and suggest concrete improvements. Prioritize by
 impact." It is intentionally self-contained; no source code access needed.
-State reflects the bot as of Nov 2026: ~73 rated games played, blitz
-rating 1523–1550.*
+State reflects the bot as of Nov 2026: ~76 rated games played, blitz
+rating 1523–1563.*
 
 ---
 
@@ -133,12 +133,20 @@ Endpoints (all with `Authorization: Bearer`):
 - `GET /api/bot/online?nb=512` — online bots (NDJSON, includes perfs/ratings).
 - `GET /api/user/{name}`, `GET /api/users/status?ids=` — opponent intel.
 
-Retry policy: one shared `_request` wrapper — retries on 429/5xx/connect
-errors/timeouts with delays (1,2,4,8,15s); 4xx raises immediately; streams
-reconnect at the main loop with 5s→120s exponential backoff. A move POST
-that lands after the game ended server-side surfaces as a 4xx, is logged
-as a warning, and discards the eval (5.2) — observed only during flaky
-network windows, never as a strength regression.
+Retry policy: one shared `_request` wrapper. **Non-move traffic** walks
+the long ladder (1,2,4,8,15s) on 429/5xx/connect errors/timeouts; 4xx
+raises immediately. **Move POSTs are clock-aware**: they use a short
+ladder (0.2/0.5/1.0s) with a 2.5s timeout — worst case ~9s of wall clock,
+after which the handler discards the eval and the next gameState
+resyncs — because a doomed 30s retry march is how you forfeit on time.
+Streams reconnect at the main loop with 5s→120s exponential backoff. A
+move POST that lands after the game ended server-side surfaces as a 4xx,
+is logged as a warning, and discards the eval (5.2) — observed only
+during flaky network windows, never as a strength regression.
+
+Every successful move POST also updates an EMA of the measured
+round-trip (`api.move_overhead`, clamped 0.15–1.5s); the time budget
+consumes that number instead of a fixed guess (5.2).
 
 ## 5. Component specifications
 
@@ -220,8 +228,11 @@ search, so a fresh dict invalidates it. Cleared every search.
 
 - Persistent TT: it survives across moves (overlapping positions are
   the whole point) and is cleared only when it outgrows `TT_MAX`
-  (500k entries). Killers, history, eval cache, node counter reset per
-  search; `stop_at = now + budget`.
+  (500k entries). The store is **always-replace**; the *probe* is
+  depth-gated (`e_depth >= depth`). Killers, eval cache and node
+  counter reset per search; **history persists but is halved each
+  search** (aging — fresh games outvote stale bonuses);
+  `stop_at = now + budget`.
 - Repetition history: the handler passes `_tt_key` counts of the real
   game so far; the search maintains `_rep_path` during recursion.
 - Iterative deepening 1..40. Root moves shuffled once per search (game
@@ -257,7 +268,8 @@ search, so a fresh dict invalidates it. Cleared every search.
   queens, kings, `occupied_co[WHITE]`, turn, castling rights, ep square
   — faster than recomputing zobrist). Mate scores stored **ply-anchored**
   and re-anchored on probe (`± ply`) so any node re-derives the true
-  distance. Flags exact/lower/upper; depth-preferred replacement.
+  distance. Flags exact/lower/upper; replacement is always-replace
+  (probe is depth-gated).
 - One movegen per node (legal list drives mate/stalemate detection and
   the move loop). No legal moves → `−MATE + ply` if in check else 0.
 - **Null-move pruning**: depth ≥ 3, not in check, side to move has
@@ -274,7 +286,8 @@ search, so a fresh dict invalidates it. Cleared every search.
   depth ≥ 1 (the attacker digs deeper through checks).
 - **Quiet-move killers** (2 per ply) and history
   `history[(piece_type, to_sq)] += depth²` on beta cutoffs.
-- TT store: `(depth, flag, ply-anchored score, best_move)`.
+- TT store: `(depth, flag, ply-anchored score, best_move)` — written
+  unconditionally (always-replace; the depth gate lives on the probe).
 
 **Quiescence** (`_quiesce`):
 
@@ -295,13 +308,16 @@ promotion 900k > killer 400k/350k > advanced pawn push +20k (to-rank
 python-chess implements it as push/is_check/pop (a full make/unmake per
 move), and the check extension already rewards checks after push.
 
-**Style layer** (`pick_move`): search, then with probability
-`style_pick_prob` (only if score > −300) swap the best move for the
-rival with the highest **violence score** among rivals within
-`style_eval_slack` cp of the best (exact root scores only):
-capture 30 + victim_value/10; promotion +15; pawn landing ranks
-4/5/6 → +8/+14/+22 (mirrored for Black); resulting check +25;
-checkmate +1000; landing within 4 of the enemy king → +4 per step
+**Style layer** (`pick_move`): the dice are rolled **before** the
+search. With probability `style_pick_prob` the search runs with the
+full persona slack; on a miss (~75% of moves) the root window tightens
+to `best − 1`, so no ray is kept open for rivals that will never be
+picked — measurably deeper search (+~0.6 ply in a 1s/smart-position
+benchmark), identical persona behavior. On a hit, rivals within
+`style_eval_slack` cp of the best (exact root scores only) compete on
+**violence score**: capture 30 + victim_value/10; promotion +15; pawn
+landing ranks 4/5/6 → +8/+14/+22 (mirrored for Black); resulting check
++25; checkmate +1000; landing within 4 of the enemy king → +4 per step
 closer. Sets a `style_pick` flag the learner uses to attribute later
 blunders.
 
@@ -353,8 +369,9 @@ pipeline below runs in the worker on a snapshot.
 after ply 60, clamped [0.35, 8.0]s. First decision out of the book
 ×1.5 (openings are where blitz games are quietly lost). Opponent < 8s
 while we > 20s → cap 0.8s (keep the pressure on). Own clock < 20s →
-`min(budget, max(0.3, s/25))`; < 5s → ≤ 0.3s. Minus 300ms network
-overhead; dead clock (< 0.8s) lives off the increment at ≥ 0.1s.
+`min(budget, max(0.3, s/25))`; < 5s → ≤ 0.3s. Minus the **measured**
+network overhead (EMA of move-POST round-trips, clamped 0.2–1.0s —
+§4); dead clock (< 0.8s) lives off the increment at ≥ 0.1s.
 
 **Pondering**: after our move posts, one background search of the
 position after our move (predicted reply), ≤ 10s, params as if 60s
@@ -502,9 +519,9 @@ blocks the stream loop.
 
 ## 6. Configuration surface (`config.yml`)
 
-- `engine`: min/max think time (0.35/8s), time_fraction 0.05, overhead
-  300ms, `ponder` true, `ponder_max_time` 10s,
-  `ponder_min_clock_ms` 10000.
+- `engine`: min/max think time (0.35/8s), time_fraction 0.05,
+  `ponder` true, `ponder_max_time` 10s, `ponder_min_clock_ms` 10000.
+  Network overhead is no longer configured — it is measured (§4).
 - `persona`: aggression 0.9, style_pick_prob 0.25, style_eval_slack 45,
   resign disabled, all chat lines + cadence knobs (25s gap, 120s
   trigger cooldown, 0.35 random skip).
@@ -516,9 +533,10 @@ blocks the stream loop.
 
 ## 7. Observed behavior so far (~73 rated games)
 
-- Career 32W / 36L / 5D; blitz rating 1523 → 1549 (peak), currently
-  ~1547. Opponents are online bots in the 1300–1850 range; the rating
-  climbed ~+25 over the last 20 games after Batch 1+2 landed.
+- Career 34W / 37L / 5D; blitz rating 1523 → 1563 (peak, Nov 11).
+  Opponents are online bots in the 1300–1900 range; the rating climbed
+  through the Batch 1+2 period and two more wins landed right before
+  the daily bot-vs-bot cap paused hunting.
 - Search depth typically 5–8 in 3+0/3+2, 9–13 in quiet 5+3 endgames;
   warmed PyPy ≈ 30k nodes/s (`bench_warm.py`). Persistent TT makes the
   first search of each move visibly faster (ponder logs show depth 8–12
@@ -593,6 +611,15 @@ blocks the stream loop.
     persona lines can only be verified in live games.
 
 ## 9. Questions for the reviewer
+
+*Review status (Nov 11, 2026): an external review produced 10 ranked
+proposals. Landed same day: style pre-roll (#1), clock-aware move
+retries + measured POST overhead (#8), doc-truth + history-aging
+(#9). The fixed-nodes self-play harness (#2) is the next work item and
+gates every strength change — at 73 games one standard error is ~±40
+Elo, so unmeasured engine tweaks are blind. Q2 (verify-then-trust
+pondering) is deprioritized per review: a fresh search against a hot
+TT is already cheap.*
 
 1. Highest-leverage strength steps from here, given the ~1500–1550
    level and the pure-Python constraint: SEE for qsearch, better delta
