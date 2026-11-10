@@ -518,6 +518,40 @@ def test_match_harness():
           f"Elo math and SPRT signs sane")
 
 
+def test_match_clock_mode():
+    """The blitz clock model: a side that runs out of bank loses on
+    time, and think time is really deducted from the clock."""
+    import match
+    clock = {"bank": 0.12, "inc": 0.0, "frac": 0.02,
+             "min_move": 0.05, "max_move": 0.05}
+    res = match.play_game({"module": "engine", "params": {}, "nodes": 0},
+                          {"module": "engine", "params": {}, "nodes": 0},
+                          chess.STARTING_FEN, True, max_plies=40, clock=clock)
+    assert res["reason"] == "flag", f"expected a flag, got {res}"
+    assert res["winner"] in ("A", "B"), res
+    assert res["plies"] < 40, f"the clock should have run out: {res}"
+    # the clock must be drained by actual think time
+    assert res["spent"]["A"] + res["spent"]["B"] > 0.05, res
+    print(f"[ok] match: clock model flags the broke side after "
+          f"{res['plies']} plies")
+
+
+def test_engine_budget_discipline():
+    """A search must return inside its budget (plus slack) and never
+    return without a move - the soft time limit depends on this."""
+    import time
+    for budget in (0.15, 0.5):
+        eng = Engine({})
+        t0 = time.time()
+        r = eng.search(chess.Board(), budget, {"aggression": 0.9})
+        dt = time.time() - t0
+        assert r["move"] is not None, "no move returned"
+        assert r["depth"] >= 1, "no completed depth"
+        assert dt <= budget + 0.35, \
+            f"overran the budget: {dt:.2f}s for {budget:.2f}s"
+    print("[ok] engine: respects its time budget, always returns a move")
+
+
 if __name__ == "__main__":
     test_engine_basic()
     test_engine_mate_in_one()
@@ -537,4 +571,6 @@ if __name__ == "__main__":
     test_game_handler_end_to_end()
     test_engine_node_budget()
     test_match_harness()
+    test_match_clock_mode()
+    test_engine_budget_discipline()
     print("\nAll smoke tests passed. RushAndCrush is battle-ready.")

@@ -128,7 +128,7 @@ def play_game(spec_a: dict, spec_b: dict, opening_fen: str, a_white: bool,
                 # out of time: the side that cannot move loses
                 other = "B" if side == "A" else "A"
                 return {"winner": other, "reason": "flag",
-                        "plies": len(uci_moves)}
+                        "plies": len(uci_moves), "spent": spent}
             budget = (left[side] * float(clock["frac"])
                       + float(clock["inc"]) * 0.4)
             budget = max(float(clock["min_move"]),
