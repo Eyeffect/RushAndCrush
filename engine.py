@@ -278,6 +278,10 @@ class Engine:
         self.min_time = float(cfg.get("min_time", 0.35))
         self.max_time = float(cfg.get("max_time", 8.0))
         self.time_fraction = float(cfg.get("time_fraction", 0.05))
+        # node budget (0 = off): the self-play harness (match.py) plays
+        # fixed-nodes games with this. Production is time-budgeted and
+        # leaves it at 0 - behavior identical either way.
+        self.max_nodes = int(cfg.get("max_nodes", 0) or 0)
 
         self.tt: dict[tuple, tuple[int, int, int, chess.Move | None]] = {}
         self.killers: list[list[chess.Move | None]] = [[None, None] for _ in range(256)]
@@ -519,6 +523,13 @@ class Engine:
                 board.queens, board.kings, board.occupied_co[chess.WHITE],
                 board.turn, board.castling_rights, board.ep_square)
 
+    def _hit_limits(self) -> bool:
+        """Hard-stop check shared by negamax, quiescence and the root
+        loop: the node budget (harness mode) or the wall-clock deadline."""
+        if self.max_nodes and self.nodes >= self.max_nodes:
+            return True
+        return time.time() > self.stop_at
+
     def search(self, board: chess.Board, budget_s: float, persona: dict | None,
                rep_keys: dict | None = None, stop_event: threading.Event | None = None,
                ponder: bool = False) -> dict:
@@ -596,7 +607,7 @@ class Engine:
         top: list[tuple[chess.Move, int]] = []
 
         for depth in range(1, 41):
-            if time.time() > self.stop_at - 0.05:
+            if self._hit_limits() or time.time() > self.stop_at - 0.05:
                 break
             # aspiration on beta: expect the score near last depth's,
             # re-search wide open if the position jumped (fail high)
@@ -669,7 +680,7 @@ class Engine:
                  ply: int, P: dict, can_null: bool = True) -> int:
         self.nodes += 1
         if self.nodes % 2048 == 0:
-            if time.time() > self.stop_at:
+            if self._hit_limits():
                 raise _SearchTimeout()
             # a ponder search is a guest: it leaves the moment a real
             # search wants the table or its owner pulls the plug
@@ -812,7 +823,7 @@ class Engine:
                  ply: int, P: dict) -> int:
         self.nodes += 1
         if self.nodes % 2048 == 0:
-            if time.time() > self.stop_at:
+            if self._hit_limits():
                 raise _SearchTimeout()
             # a ponder search is a guest: it leaves the moment a real
             # search wants the table or its owner pulls the plug

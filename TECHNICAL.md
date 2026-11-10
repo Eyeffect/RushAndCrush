@@ -79,8 +79,9 @@ Shared state (all JSON, atomic writes via tmp-file + `os.replace`):
 - `data/stats.json` — career W/L/D
 - `data/nemesis.json` — head-to-head per opponent (revenge targeting)
 - `data/hunter.json` — outgoing challenge attempts (anti-spam memory)
-- `data/learn/learning.json` — genes, opening book, blunder ledger,
-  evolution window
+- `data/learning.json` — genes, opening book, evolution window
+- `data/blunders.jsonl` — one line per blunder (phase, clock, style-pick,
+  **fen + uci + eval drop**) — the replay-regression corpus
 - `data/pgn/*.pgn` + `data/games.jsonl` — post-game archive (never read
   at runtime)
 
@@ -517,6 +518,46 @@ reconnects with backoff on network errors; Ctrl+C → clean exit. Incoming
 challenge decisions run on short-lived threads so a slow HTTP call never
 blocks the stream loop.
 
+### 5.7 Offline tooling — the measuring stick
+
+**`match.py` — engine-vs-engine self-play harness.** Every strength
+change must win here before it ships; at live-rating noise (~±40 Elo
+per session) unmeasured tweaks are blind.
+
+- Players are specs: `module:nodes` shorthand (e.g. `engine:800` vs
+  `engine:4000`) or full JSON `{"module": "...", "params": {...}}`.
+  A candidate engine can be copied to `engine_cand.py` and raced
+  against the baseline without touching git.
+- Games are color-swapped **pairs** on shared seeded random openings
+  (`--random-plies`, default 6) — first-move bias cancels.
+- Fixed **nodes** per move measure strength-per-node (engine
+  efficiency); fixed **time** (`--nodes 0 --time 0.2`) is for
+  time-management experiments. Node budgets use the engine's
+  `max_nodes` knob (0 = off in production; behavior identical).
+- Draw policy: python-chess outcomes (mate, stalemate, insufficient
+  material, threefold, fifty-move) + ply-cap adjudication by material
+  (|diff| ≥ 300 cp decides, else draw). Repetition keys of the real
+  game are passed to the search, so winning sides avoid threefolds.
+- Statistics: Elo ± 95% CI (binomial approximation) and an SPRT with
+  logistic score model (`--sprt`, bounds 0/25 Elo, α=β=0.05) that
+  stops the match once the decision is made. Games run in a
+  multiprocessing pool (spawn), workers default to CPU count.
+- Validated: identical players → Elo −35 ± 153 over 20 games
+  (statistically zero, as it must be); 800 vs 4000 nodes →
+  **Elo −150 ± 132** over 32 games (the harness sees real strength
+  gaps). ~3s per game at 800–4000 nodes with 8 PyPy workers.
+
+**`replay_blunders.py` — blunder regression suite.** Replays the
+ledger (`data/blunders.jsonl`, fen + the move actually played + the
+eval drop) against the current engine at a fixed node budget and asks
+two questions per entry: does the engine still choose the blunder,
+and what does it cost now? Baseline (Nov 11, 8000 nodes/move): 33
+replayable, **54.5% still chosen**, mean cost 136 cp (vs 420 cp when
+filed — the Batch-1 engine already repairs most of the damage).
+`--strict N` fails the run above N% still-played. Run after every
+engine change; a change that raises either number is suspect
+regardless of what the Elo match says.
+
 ## 6. Configuration surface (`config.yml`)
 
 - `engine`: min/max think time (0.35/8s), time_fraction 0.05,
@@ -613,13 +654,14 @@ blocks the stream loop.
 ## 9. Questions for the reviewer
 
 *Review status (Nov 11, 2026): an external review produced 10 ranked
-proposals. Landed same day: style pre-roll (#1), clock-aware move
-retries + measured POST overhead (#8), doc-truth + history-aging
-(#9). The fixed-nodes self-play harness (#2) is the next work item and
-gates every strength change — at 73 games one standard error is ~±40
-Elo, so unmeasured engine tweaks are blind. Q2 (verify-then-trust
-pondering) is deprioritized per review: a fresh search against a hot
-TT is already cheap.*
+proposals. Landed: style pre-roll (#1), clock-aware move retries +
+measured POST overhead (#8), doc-truth + history-aging (#9), and the
+measurement layer (#2) — `match.py` self-play harness with Elo/SPRT
+plus the `replay_blunders.py` regression suite (§5.7), so #3 (time
+management), #4 (pruning) and #5 (staged movegen) can now be landed
+only with a measured win. Q2 (verify-then-trust pondering) is
+deprioritized per review: a fresh search against a hot TT is already
+cheap.*
 
 1. Highest-leverage strength steps from here, given the ~1500–1550
    level and the pure-Python constraint: SEE for qsearch, better delta

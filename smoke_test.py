@@ -470,6 +470,47 @@ def test_game_handler_end_to_end(tmp="data_test_handler"):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_engine_node_budget():
+    """max_nodes caps the search: the harness's measuring unit works,
+    and a 0-budget engine behaves exactly as before (time-only)."""
+    eng = Engine({"max_nodes": 800})
+    r = eng.search(chess.Board(), 30.0, {"aggression": 0.9})
+    assert r["move"] is not None, "node-capped search returned no move"
+    assert eng.nodes < 800 + 4096, \
+        f"node budget ignored: {eng.nodes} nodes"
+    eng_t = Engine({})
+    r2 = eng_t.search(chess.Board(), 1.0, {"aggression": 0.9})
+    assert r2["move"] is not None
+    assert eng_t.max_nodes == 0
+    print(f"[ok] engine: node budget respected ({eng.nodes} nodes, "
+          f"depth {r['depth']}), time mode untouched")
+
+
+def test_match_harness():
+    """The self-play harness: one tiny game completes and classifies,
+    and the Elo/SPRT math points the right way on a known sample."""
+    import match
+
+    res = match.play_game({"module": "engine", "params": {}, "nodes": 150},
+                          {"module": "engine", "params": {}, "nodes": 150},
+                          chess.STARTING_FEN, True, max_plies=40)
+    assert res["winner"] in ("A", "B", "draw"), res
+    assert res["plies"] > 0
+    assert res["reason"] in ("mate", "stalemate", "material", "fifty",
+                             "repetition", "adjudicated", "ply-cap"), res
+
+    elo, ci = match.elo_report(10, 5, 5)
+    assert elo > 0, f"winning sample must give positive Elo: {elo}"
+    assert ci > 0
+    elo2, _ = match.elo_report(5, 10, 5)
+    assert elo2 < 0, f"losing sample must give negative Elo: {elo2}"
+    e0, _ = match.elo_report(5, 5, 10)
+    assert abs(e0) < 1e-9, f"even sample must be ~0 Elo: {e0}"
+    assert match.sprt_llr(10, 2, 8) > 0 > match.sprt_llr(2, 10, 8)
+    print(f"[ok] match: mini game -> {res['winner']} ({res['reason']}), "
+          f"Elo math and SPRT signs sane")
+
+
 if __name__ == "__main__":
     test_engine_basic()
     test_engine_mate_in_one()
@@ -487,4 +528,6 @@ if __name__ == "__main__":
     test_learning_genes()
     test_ponder_yields()
     test_game_handler_end_to_end()
+    test_engine_node_budget()
+    test_match_harness()
     print("\nAll smoke tests passed. RushAndCrush is battle-ready.")
