@@ -113,7 +113,9 @@ def play_game(spec_a: dict, spec_b: dict, opening_fen: str, a_white: bool,
     eng_b = make_player(spec_b)
     board = chess.Board(opening_fen)
     uci_moves: list[str] = []
-    left = {"A": float(clock["bank"]), "B": float(clock["bank"])} if clock else None
+    if clock and "bank" in clock:          # one shared clock for both sides
+        clock = {"A": clock, "B": clock}
+    left = {"A": float(clock["A"]["bank"]), "B": float(clock["B"]["bank"])} if clock else None
     spent = {"A": 0.0, "B": 0.0}
 
     while len(uci_moves) < max_plies:
@@ -124,15 +126,16 @@ def play_game(spec_a: dict, spec_b: dict, opening_fen: str, a_white: bool,
         params = spec.get("params") or {}
         nodes = int(spec.get("nodes", 0) or 0)
         if clock is not None:
+            ck = clock[side]
             if left[side] <= 0.0:
                 # out of time: the side that cannot move loses
                 other = "B" if side == "A" else "A"
                 return {"winner": other, "reason": "flag",
                         "plies": len(uci_moves), "spent": spent}
-            budget = (left[side] * float(clock["frac"])
-                      + float(clock["inc"]) * 0.4)
-            budget = max(float(clock["min_move"]),
-                         min(float(clock["max_move"]), budget))
+            budget = (left[side] * float(ck["frac"])
+                      + float(ck["inc"]) * 0.4)
+            budget = max(float(ck["min_move"]),
+                         min(float(ck["max_move"]), budget))
             t0 = time.time()
             r = eng.search(board, budget, params,
                            rep_keys=_rep_keys(opening_fen, uci_moves))
@@ -332,14 +335,31 @@ def main() -> None:
                     help="minimum think time per move (bank mode)")
     ap.add_argument("--max-move", type=float, default=1.0,
                     help="maximum think time per move (bank mode)")
+    ap.add_argument("--a-frac", type=float, default=None,
+                    help="override A's fraction of remaining clock per move")
+    ap.add_argument("--b-frac", type=float, default=None,
+                    help="override B's fraction of remaining clock per move")
+    ap.add_argument("--a-bank", type=float, default=None,
+                    help="override A's clock seconds")
+    ap.add_argument("--b-bank", type=float, default=None,
+                    help="override B's clock seconds")
     args = ap.parse_args()
 
     spec_a = parse_player(args.a, args.a_params, args.nodes, args.time)
     spec_b = parse_player(args.b, args.b_params, args.nodes, args.time)
     clock = None
     if args.bank > 0:
-        clock = {"bank": args.bank, "inc": args.inc, "frac": args.frac,
-                 "min_move": args.min_move, "max_move": args.max_move}
+        base = {"bank": args.bank, "inc": args.inc, "frac": args.frac,
+                "min_move": args.min_move, "max_move": args.max_move}
+        clock = {"A": dict(base), "B": dict(base)}
+        if args.a_frac is not None:
+            clock["A"]["frac"] = args.a_frac
+        if args.b_frac is not None:
+            clock["B"]["frac"] = args.b_frac
+        if args.a_bank is not None:
+            clock["A"]["bank"] = args.a_bank
+        if args.b_bank is not None:
+            clock["B"]["bank"] = args.b_bank
         # the clock decides how long a move may think - node caps would
         # contradict it
         for sp in (spec_a, spec_b):

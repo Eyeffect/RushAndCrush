@@ -590,7 +590,9 @@ class Engine:
         self.history = defaultdict(
             int, {k: v >> 1 for k, v in self.history.items() if v > 1})
         self.nodes = 0
-        self.stop_at = time.time() + max(0.05, budget_s)
+        start = time.time()
+        budget_s = max(0.05, budget_s)
+        self.stop_at = start + budget_s
         self._rep_hist = dict(rep_keys) if rep_keys else {}
         self._rep_path = {}
 
@@ -605,10 +607,20 @@ class Engine:
         best_score = 0
         depth_reached = 0
         top: list[tuple[chess.Move, int]] = []
+        last_depth_s = 0.0
 
         for depth in range(1, 41):
             if self._hit_limits() or time.time() > self.stop_at - 0.05:
                 break
+            # soft limit: only start a depth we can probably FINISH. The
+            # next iteration costs roughly 1.6x the last one, so if it
+            # won't fit, stop here and keep the completed depth we have
+            # instead of burning the clock on a partial iteration.
+            if depth > 1 and last_depth_s:
+                est = last_depth_s * 1.6
+                if time.time() + est > self.stop_at - 0.05:
+                    break
+            depth_started = time.time()
             # aspiration on beta: expect the score near last depth's,
             # re-search wide open if the position jumped (fail high)
             beta = best_score + 40 if depth >= 3 else INF
@@ -658,6 +670,7 @@ class Engine:
                 # depth fully searched: commit
                 best, best_score = best_this, best_score_this
                 depth_reached = depth
+                last_depth_s = time.time() - depth_started
                 top = sorted(scores, key=lambda x: x[1], reverse=True)[:6]
                 prev_scores = dict(scores)
                 if best_score > MATE - 1000:   # mate found, stop digging
