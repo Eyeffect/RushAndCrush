@@ -1,0 +1,257 @@
+# ============================================================
+#  RushAndCrush - a soldier that only knows one direction
+# ============================================================
+
+token: ""            # Lichess OAuth2 token with the "bot:play" scope.
+                     # Leave empty to use the LICHESS_BOT_TOKEN env variable (recommended).
+
+url: "https://lichess.org"
+
+engine:
+  # Our homemade engine. No Stockfish. All heart.
+  min_time: 0.35        # seconds - never think less than this
+  max_time: 8.0         # seconds - never think longer than this
+  time_fraction: 0.05   # fraction of remaining clock spent per move
+  overhead_ms: 300      # safety margin for network + think time
+  ponder: true              # think on the opponent's clock (TT warming only)
+  ponder_max_time: 10.0     # seconds a ponder search may run
+  ponder_min_clock_ms: 10000  # only ponder when OUR clock still has this much
+
+persona:
+  # ---- playing style ----
+  aggression: 0.9         # 0..1 - how much the evaluation favors attacking terms
+  style_pick_prob: 0.25   # chance of choosing a spicy 2nd-best aggressive move
+  style_eval_slack: 45    # centipawns we're willing to give up for extra violence
+  resign_enabled: false   # a soldier does not surrender. Change if you must.
+  resign_score: -1200     # if resign_enabled: resign below this eval...
+  resign_after_moves: 50  # ...after this many plies, 3 own moves in a row
+
+  # ---- chat ----
+  chat:
+    enabled: true
+    min_gap_seconds: 25      # global minimum gap between messages
+    trigger_cooldown: 120    # seconds between two messages of the same trigger
+    random_skip: 0.35        # chance to skip a triggered message (anti-spam)
+    lines:
+      game_start:
+        - "Lock and load, {opponent}. The push begins."
+        - "I don't defend. I advance. Good luck, {opponent}."
+        - "Fresh battlefield, same plan: forward, {opponent}."
+        - "Retreat is not in my vocabulary. Neither is 'castle early'."
+        - "Soldier RushAndCrush reporting for duty. Mission: your king."
+        - "Reconnaissance complete, {opponent}. You have a king. It has a countdown."
+        - "The plan is simple: everything of yours, everywhere, at once."
+        - "My ladders only go up, {opponent}."
+        - "They asked where I'm marching. I said: your half of the board."
+        - "Fortune favors the brave. So does my pawn storm."
+      game_start_nemesis:
+        - "Round two, {opponent}. Last time was reconnaissance."
+        - "You beat me once, {opponent}. Nobody out-attacks me twice."
+        - "Welcome back, {opponent}. The pawns remember everything."
+        - "{opponent}. My list is short and you're at the top of it."
+        - "Every defeat earns one answer: more aggression. Prepare accordingly."
+        - "I studied what you did to me, {opponent}. It ends today."
+      game_start_rematch:
+        - "Back for more, {opponent}? Brave. The scoreboard says ouch."
+        - "Welcome back, {opponent}. The throne is exactly where I left it."
+        - "{opponent} returns! The pawns have been rehearsing their victory march."
+        - "One win already banked, {opponent}. Interest compounds."
+        - "You know my plan, {opponent}. It still works."
+      game_start_grudge:
+        - "One apiece, {opponent}. This one decides the war."
+        - "We're even, {opponent}. Not for long."
+        - "{opponent}. The rubber match. Loser salutes."
+        - "The series is tied and my pawns are restless."
+      taunt:
+        - "Was that a move or a moment of silence, {opponent}?"
+        - "My scouts report your queen is lonely."
+        - "That square was defended. Last move. By someone else."
+        - "I accept your generous donation. The push continues."
+        - "Even my pawns are confused by that one."
+        - "I've seen retreats with more conviction, {opponent}."
+        - "Your position has a hole shaped exactly like my rook."
+        - "That's the spirit. A defenceless spirit, but spirit."
+        - "My grandkids will hear about that move."
+        - "Keep hanging pieces, {opponent}. My soldiers need the supplies."
+        - "I asked my scouts what that move was. They are still laughing."
+        - "Every piece you hang feeds the push, {opponent}."
+      self_blunder:
+        - "Tactical sabotage! ...Yes. Sabotage."
+        - "Every soldier stumbles. Then they keep marching."
+        - "That was a feint. Everything I do is a feint."
+        - "I saw that. I simply believe in the counterattack."
+        - "A strategic donation. To charity. The charity of violence."
+        - "The map says we're fine. The map and I are close."
+        - "Did I do that? Good. Unpredictability is a weapon."
+      repeat_mistake:
+        - "Same mistake again. My memory is long, {opponent}."
+        - "Twice is a pattern. Thrice is a habit. I break habits."
+        - "I have filed this error in my war journal."
+        - "Déjà vu, {opponent}. My favorite weapon is your routine."
+        - "Third time's the charm? Wrong war, wrong proverb."
+      queen_lost:
+        - "My queen fell in glorious combat. The pawns avenge her now."
+        - "Queens are replaceable. Momentum is not."
+        - "One piece down. Zero morale lost. Regroup and rush."
+        - "She died as she lived: somewhere near the enemy king."
+        - "She fell. The push does not pause for funerals, {opponent}."
+      queen_taken:
+        - "Your queen was holding your position together. Was."
+        - "That's not a trade, {opponent}. That's an execution."
+        - "The crown was heavy anyway. I'll carry it myself."
+        - "Extracted. The push continues, slightly richer."
+      first_blood:
+        - "First blood. The supply lines are open, {opponent}."
+        - "One piece down. The push claims its first trophy."
+        - "That is not a trade. That is an acquisition."
+      castle:
+        - "Fortifications complete. This is not defense - it is a staging area."
+        - "The king takes cover. The pawns do not."
+        - "Shelter, briefly. Then the push resumes with interest."
+      promotion:
+        - "The infantry becomes a queen. Ranks are earned here, {opponent}."
+        - "A pawn marched the entire battlefield. Promote. Push. Repeat."
+        - "Corporal Pawn, you are now a General. The push continues."
+      en_passant:
+        - "En passant. The sneakiest ambush in the manual."
+        - "You thought that pawn was safe. The manual says otherwise."
+      comeback:
+        - "Behind, never beaten. Watch the flip, {opponent}."
+        - "Down material, up momentum. The pawns remember everything."
+        - "The counterattack begins. Retreat was never the plan."
+      check_given:
+        - "Knock knock."
+        - "All fronts report progress. Your king is one of them."
+        - "Just checking in. And checking you."
+        - "Pay attention, {opponent}. This part matters."
+        - "Your king moved. My pawns call that cardio."
+        - "I keep my promises short: check, push, repeat."
+        - "Recon report: your king, relocated by force."
+      pawn_storm:
+        - "The advance continues. Nothing stops the infantry."
+        - "Another pawn forward. Another grain of your position gone."
+        - "Infantry never tires. Infantry never gets lost."
+        - "Each pawn is a promise. I keep all of them."
+        - "The infantry does not stop for scenery, {opponent}."
+      time_pressure:
+        - "The clock is my second-favorite weapon."
+        - "Tick tock, {opponent}. Hurry up and lose."
+        - "Your flag is looking nervous, {opponent}."
+        - "They say blitz is a race. I brought cavalry."
+      last_stand:
+        - "The position is dead. A soldier does not surrender - CHARGE."
+        - "Retreat? Never heard of her. All-in, {opponent}."
+        - "Outnumbered, outplayed, unbothered. Maximum violence."
+        - "No more lessons. No more patience. Only the push."
+      revenge_win:
+        - "Debt collected, {opponent}. The ledger is clean. The push continues."
+        - "That one was for last time, {opponent}. Consider us even... for now."
+        - "Revenge is a dish best served in blitz. GG, {opponent}."
+      win_mate:
+        - "Checkmate. Objective secured the loud way. GG, {opponent}."
+        - "The king fell where it stood. That is the push, {opponent}. GG."
+      win_resign:
+        - "A wise retreat, {opponent}. Live to march another day. GG."
+        - "They surrendered. The pawns accept your apology, {opponent}."
+      win_time:
+        - "The flag falls, the hill is ours. Tick tock, {opponent}. GG."
+        - "Won on the clock. My second-favorite weapon. GG, {opponent}."
+      loss_mate:
+        - "My king fell with honor. Regroup. Rematch. GG, {opponent}."
+        - "They took the hill today. The war is long, {opponent}. GG."
+      loss_resign:
+        - "The hill was lost. A soldier knows when. GG, {opponent}."
+      loss_time:
+        - "The clock got me this time. The push got careless. GG, {opponent}."
+        - "Flagged. A supply failure, nothing more. Rematch, {opponent}."
+      draw_stalemate:
+        - "Stalemate. No flag fell and my pawns are FURIOUS. GG, {opponent}."
+        - "A truce nobody wanted. The pawns demand a rematch, {opponent}."
+      win:
+        - "Objective secured. The push never stops."
+        - "Good fight, {opponent}. Your king fell with honor. Mine didn't fall at all."
+        - "Another hill taken. Who's next?"
+        - "Victory report: aggressive, unapologetic, repeatable."
+        - "The war journal gains a page. A good page, {opponent}."
+        - "First the hill, then the mountain. GG, {opponent}."
+      loss:
+        - "A tactical withdrawal from the board. We regroup at dawn."
+        - "You held the line. This time. March again?"
+        - "I lost the battle, not the war. GG, {opponent}."
+        - "You out-soldiered me today, {opponent}. Salute. Rematch soon."
+        - "Filed under 'motivation'. See you on the next board."
+      draw:
+        - "Both armies bled. Neither flag fell. GG, {opponent}."
+        - "A truce, {opponent}. My pawns are already planning to break it."
+        - "No flag fell today. Unacceptable. See you in the next one."
+      resign:
+        - "I refuse to watch my position die slowly. GG, {opponent}."
+        - "A soldier knows when the hill is lost. This hill is lost. GG."
+      spectator_start:
+        - "RushAndCrush on the march. Grab a seat - this won't be defensive."
+        - "Front row seats to the push. Fireworks guaranteed."
+        - "Welcome, spectators. The infantry performs for free."
+      spectator_win:
+        - "Another victory for the infantry! The next battle begins shortly."
+        - "Show's over, folks. The push resumes shortly."
+      spectator_loss:
+        - "We fought to the last pawn. The push resumes shortly."
+        - "Tough crowd, tougher defeat. Rebuilding the ranks now."
+
+hunter:
+  # ---- hunting matches ----
+  enabled: true
+  max_games: 1                # ONE game at a time: there is one search lock,
+                              # so a second game's clock would burn while it
+                              # waited for the first one's search (flag risk)
+  challenge_interval: 60      # min seconds between outgoing challenges
+  idle_check: 15              # seconds between hunter ticks
+  challenge_timeout_min: 15   # stop challenging an opponent who didn't accept, for N minutes
+  time_controls:              # random pick for outgoing challenges (limit+inc in seconds)
+    - [180, 0]
+    - [180, 2]
+    - [300, 0]
+    - [300, 3]
+  opponent_min_rating: 600
+  opponent_max_rating: 2200
+  nemesis_cooldown_min: 30    # min minutes between revenge challenges
+  decline_humans_when_full: true
+
+learning:
+  enabled: true
+  book_depth: 8          # plies of opening we memorize and grade by results
+  book_min_samples: 3    # a book line needs this many games before we trust it
+  window: 10             # games per evolution window (snapshot / explore / revert)
+  freeze_until_games: 100  # no gene evolution until this many games are logged:
+                           # a 10-game window has a stderr of ~0.16, so "drops"
+                           # are noise. Until then: lessons yes, evolution no.
+  seed_book:
+    # Classic attacking doctrine, pre-graded 2W/1L so the soldier trusts it
+    # on the spot. Every real result still re-grades it; drop below 45%
+    # score and the engine thinks for itself again. UCI moves, <=8 plies,
+    # one seed move per position (no tie-break luck). The first line pins
+    # white's 1st move to 1.e4 - the book then compares its real record
+    # against the seeded 2W/1L, so a badly performing 1.e4 can lose the
+    # slot back to another learned first move. To switch to 1.d4 doctrine,
+    # change this line AND delete the "e2e4" entry from learning.json's
+    # root ("") node - seeds never overwrite existing book data.
+    white:
+      - "e2e4"                                     # 1.e4. Always. The push is not a negotiation.
+      - "e2e4 e7e5 f2f4 e5f4 g1f3"                 # King's Gambit - THE weapon vs 1...e5
+      - "e2e4 c7c5 d2d4 c5d4 c2c3 d4c3 b1c3"       # Smith-Morra, punish the Sicilian
+      - "e2e4 g8f6 e4e5 f6d5 c2c4 d5b6 f2f4"       # Four Pawns vs Alekhine
+      - "e2e4 e7e6 d2d4 d7d5 e4e5 c7c5"            # Advance vs the French
+      - "e2e4 c7c6 d2d4 d7d5 e4e5 c8f5 g1f3 e7e6"  # Advance vs the Caro
+      - "e2e4 d7d5 e4d5 d8d5 b1c3 d5a5 d2d4"       # Scandinavian, the queen provokes
+      - "d2d4 d7d5 e2e4 d5e4 b1c3 g8f6 f2f3 e4f3"  # Blackmar-Diemer, maximum violence
+      - "d2d4 g8f6 c2c4 g7g6 b1c3 f8g7 e2e4 d7d6"  # Samisch storm on the kingside
+    black:
+      - "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6"  # Najdorf setup
+      - "e2e4 c7c5 b1c3 d7d6"                      # Sicilian vs 2.Nc3
+      - "e2e4 c7c5 d2d4 c5d4 c2c3 d4c3 b1c3 b8c6"  # accept the Morra, grab the pawn
+      - "d2d4 g8f6 c2c4 g7g6 b1c3 f8g7 e2e4 d7d6"  # KID - the same storm, black side
+      - "c2c4 e7e5 b1c3 g8f6 g1f3 b8c6 f1c4 f8c5"  # 1...e5 vs the English
+      - "g1f3 d7d5 d2d4 g8f6 c2c4 e7e6"            # vs 1.Nf3
+
+account:
+  username: "RushAndCrush"   # informational; read from the API at runtime

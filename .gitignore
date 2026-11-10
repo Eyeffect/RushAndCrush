@@ -1,0 +1,13 @@
+# runtime state - the bot's brain regenerates as it plays
+data/
+data_test/
+data_test_handler/
+
+# logs and caches
+rushandcrush.log
+__pycache__/
+*.py[cod]
+
+# never commit tokens or env files
+.env
+*.token
