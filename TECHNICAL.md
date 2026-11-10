@@ -540,6 +540,14 @@ per session) unmeasured tweaks are blind.
   efficiency); fixed **time** (`--nodes 0 --time 0.2`) is for
   time-management experiments. Node budgets use the engine's
   `max_nodes` knob (0 = off in production; behavior identical).
+- **Clock mode** (`--bank S --inc S --frac F --min-move S --max-move S`)
+  models a real blitz clock: each side owns a bank of seconds, a move may
+  think `remaining × frac + inc × 0.4` seconds (clamped to
+  `[min-move, max-move]`), the clock is drained by the actual think
+  time, and a side that runs out loses on time. This is the **only**
+  mode in which a time-management change can be measured — saved
+  seconds buy deeper searches later, exactly like the live bot
+  (`budget = remaining × time_fraction + inc × 0.4`).
 - Draw policy: python-chess outcomes (mate, stalemate, insufficient
   material, threefold, fifty-move) + ply-cap adjudication by material
   (|diff| ≥ 300 cp decides, else draw). Repetition keys of the real
@@ -552,6 +560,8 @@ per session) unmeasured tweaks are blind.
   (statistically zero, as it must be); 800 vs 4000 nodes →
   **Elo −150 ± 132** over 32 games (the harness sees real strength
   gaps). ~3s per game at 800–4000 nodes with 8 PyPy workers.
+  Clock mode validated separately: identical players → Elo −0 ± 340
+  with A 47s / B 48s and 0 flags over 4 games (the clock is fair).
 
 **`replay_blunders.py` — blunder regression suite.** Replays the
 ledger (`data/blunders.jsonl`, fen + the move actually played + the
@@ -560,9 +570,10 @@ two questions per entry: does the engine still choose the blunder,
 and what does it cost now? Baseline (Nov 11, 8000 nodes/move): 33
 replayable, **54.5% still chosen**, mean cost 136 cp (vs 420 cp when
 filed — the Batch-1 engine already repairs most of the damage).
-`--strict N` fails the run above N% still-played. Run after every
-engine change; a change that raises either number is suspect
-regardless of what the Elo match says.
+`--strict N` fails the run above N% still-played. `--engine <module>`
+replays against a candidate engine (e.g. `engine_cand`) instead of the
+shipped one. Run after every engine change; a change that raises
+either number is suspect regardless of what the Elo match says.
 
 ## 6. Configuration surface (`config.yml`)
 

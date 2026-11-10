@@ -97,21 +97,49 @@ def _material_cp(board: chess.Board) -> int:
 
 
 def play_game(spec_a: dict, spec_b: dict, opening_fen: str, a_white: bool,
-              max_plies: int) -> dict:
-    """Play one game. Returns {'winner': 'A'|'B'|'draw', 'reason', 'plies'}."""
+              max_plies: int, clock: dict | None = None) -> dict:
+    """Play one game. Returns {'winner': 'A'|'B'|'draw', 'reason', 'plies'}.
+
+    clock (optional) models a real blitz clock:
+      {"bank": seconds on the clock, "inc": increment per move,
+       "frac": fraction of the remaining clock spendable per move,
+       "min_move": floor per move, "max_move": ceiling per move}
+    Each side gets its own clock; think time is deducted from it, and a
+    side that runs out loses on time. Saved seconds therefore buy
+    DEEPER searches later - exactly how the bot spends its clock, and
+    the only way a time-management change can be measured.
+    """
     eng_a = make_player(spec_a)
     eng_b = make_player(spec_b)
     board = chess.Board(opening_fen)
     uci_moves: list[str] = []
+    left = {"A": float(clock["bank"]), "B": float(clock["bank"])} if clock else None
+    spent = {"A": 0.0, "B": 0.0}
 
     while len(uci_moves) < max_plies:
         if board.turn == (chess.WHITE if a_white else chess.BLACK):
-            eng, spec = eng_a, spec_a
+            eng, spec, side = eng_a, spec_a, "A"
         else:
-            eng, spec = eng_b, spec_b
+            eng, spec, side = eng_b, spec_b, "B"
         params = spec.get("params") or {}
         nodes = int(spec.get("nodes", 0) or 0)
-        if nodes > 0:
+        if clock is not None:
+            if left[side] <= 0.0:
+                # out of time: the side that cannot move loses
+                other = "B" if side == "A" else "A"
+                return {"winner": other, "reason": "flag",
+                        "plies": len(uci_moves)}
+            budget = (left[side] * float(clock["frac"])
+                      + float(clock["inc"]) * 0.4)
+            budget = max(float(clock["min_move"]),
+                         min(float(clock["max_move"]), budget))
+            t0 = time.time()
+            r = eng.search(board, budget, params,
+                           rep_keys=_rep_keys(opening_fen, uci_moves))
+            elapsed = time.time() - t0
+            left[side] -= elapsed
+            spent[side] += elapsed
+        elif nodes > 0:
             r = eng.search(board, BIG_BUDGET_S, params,
                            rep_keys=_rep_keys(opening_fen, uci_moves))
         else:
@@ -126,24 +154,29 @@ def play_game(spec_a: dict, spec_b: dict, opening_fen: str, a_white: bool,
     def win(white_won: bool, reason: str) -> dict:
         a_won = (white_won == a_white)
         return {"winner": "A" if a_won else "B", "reason": reason,
-                "plies": len(uci_moves)}
+                "plies": len(uci_moves), "spent": spent}
 
     if board.is_checkmate():
         return win(board.turn == chess.BLACK, "mate")
     if board.is_stalemate():
-        return {"winner": "draw", "reason": "stalemate", "plies": len(uci_moves)}
+        return {"winner": "draw", "reason": "stalemate", "plies": len(uci_moves),
+                "spent": spent}
     if board.is_insufficient_material():
-        return {"winner": "draw", "reason": "material", "plies": len(uci_moves)}
+        return {"winner": "draw", "reason": "material", "plies": len(uci_moves),
+                "spent": spent}
     if board.is_fifty_moves():
-        return {"winner": "draw", "reason": "fifty", "plies": len(uci_moves)}
+        return {"winner": "draw", "reason": "fifty", "plies": len(uci_moves),
+                "spent": spent}
     if board.is_repetition(3):
-        return {"winner": "draw", "reason": "repetition", "plies": len(uci_moves)}
+        return {"winner": "draw", "reason": "repetition", "plies": len(uci_moves),
+                "spent": spent}
     # ply-cap adjudication: material decides, otherwise the soldier's
     # favorite outcome - nobody proved anything, nobody gets the point
     mat = _material_cp(board)
     if abs(mat) >= DRAW_MAT_CP:
         return win(mat > 0, "adjudicated")
-    return {"winner": "draw", "reason": "ply-cap", "plies": len(uci_moves)}
+    return {"winner": "draw", "reason": "ply-cap", "plies": len(uci_moves),
+            "spent": spent}
 
 
 def _play_task(t: tuple) -> dict:
@@ -201,7 +234,7 @@ def sprt_decision(llr: float, alpha: float = 0.05,
 
 def run_match(spec_a: dict, spec_b: dict, games: int, workers: int,
               random_plies: int, max_plies: int, seed: int,
-              verbose: bool = True) -> dict:
+              verbose: bool = True, clock: dict | None = None) -> dict:
     """Color-swapped pairs on shared openings; returns aggregate stats."""
     if games % 2:
         games += 1
@@ -210,8 +243,8 @@ def run_match(spec_a: dict, spec_b: dict, games: int, workers: int,
     tasks = []
     for i in range(pairs):
         fen = gen_opening(seed + i, random_plies)
-        tasks.append((spec_a, spec_b, fen, True, max_plies))
-        tasks.append((spec_a, spec_b, fen, False, max_plies))
+        tasks.append((spec_a, spec_b, fen, True, max_plies, clock))
+        tasks.append((spec_a, spec_b, fen, False, max_plies, clock))
     random.Random(seed).shuffle(tasks)
 
     results: list[dict] = []
@@ -220,8 +253,12 @@ def run_match(spec_a: dict, spec_b: dict, games: int, workers: int,
         for k, res in enumerate(pool.imap_unordered(_play_task, tasks), 1):
             results.append(res)
             if verbose:
+                extra = ""
+                if res.get("spent"):
+                    extra = (f", A {res['spent']['A']:.1f}s / "
+                             f"B {res['spent']['B']:.1f}s")
                 print(f"[{k:>3}/{len(tasks)}] {res['winner']:4s} "
-                      f"({res['reason']}, {res['plies']} plies)", flush=True)
+                      f"({res['reason']}, {res['plies']} plies{extra})", flush=True)
 
     a_wins = sum(1 for r in results if r["winner"] == "A")
     b_wins = sum(1 for r in results if r["winner"] == "B")
@@ -285,12 +322,32 @@ def main() -> None:
                     help="player B persona overrides: k=v,k=v")
     ap.add_argument("--sprt", action="store_true",
                     help="early stop on SPRT decision (bounds 0/25 Elo)")
+    ap.add_argument("--bank", type=float, default=0.0,
+                    help="clock seconds per side (0 = fixed --time per move)")
+    ap.add_argument("--inc", type=float, default=0.0,
+                    help="clock increment per move (bank mode)")
+    ap.add_argument("--frac", type=float, default=0.05,
+                    help="fraction of remaining clock spendable per move")
+    ap.add_argument("--min-move", type=float, default=0.05,
+                    help="minimum think time per move (bank mode)")
+    ap.add_argument("--max-move", type=float, default=1.0,
+                    help="maximum think time per move (bank mode)")
     args = ap.parse_args()
 
     spec_a = parse_player(args.a, args.a_params, args.nodes, args.time)
     spec_b = parse_player(args.b, args.b_params, args.nodes, args.time)
+    clock = None
+    if args.bank > 0:
+        clock = {"bank": args.bank, "inc": args.inc, "frac": args.frac,
+                 "min_move": args.min_move, "max_move": args.max_move}
+        # the clock decides how long a move may think - node caps would
+        # contradict it
+        for sp in (spec_a, spec_b):
+            sp["nodes"] = 0
+            sp.pop("time", None)
     print(f"A = {spec_a}", flush=True)
     print(f"B = {spec_b}", flush=True)
+    print(f"clock = {clock}", flush=True)
 
     wins = losses = draws = 0
     t0 = time.time()
@@ -305,7 +362,7 @@ def main() -> None:
             n = min(chunk * 2, args.games - played)
             stats = run_match(spec_a, spec_b, n, args.workers,
                               args.random_plies, args.max_plies, args.seed + played,
-                              verbose=False)
+                              verbose=False, clock=clock)
             for r in stats["results"]:
                 if r["winner"] == "A":
                     wins += 1
@@ -322,7 +379,8 @@ def main() -> None:
                 llr_done = True
     else:
         stats = run_match(spec_a, spec_b, args.games, args.workers,
-                          args.random_plies, args.max_plies, args.seed)
+                          args.random_plies, args.max_plies, args.seed,
+                          clock=clock)
         wins, losses, draws = (stats["a_wins"], stats["b_wins"],
                                stats["draws"])
 
@@ -332,6 +390,13 @@ def main() -> None:
     print(f"games: {n}   A: {wins}W {draws}D {losses}L   "
           f"score {((wins + 0.5 * draws) / n):.3f}")
     print(f"Elo(A vs B): {elo:+.0f} ± {ci:.0f} (95%)")
+    if clock:
+        ta = sum(r.get("spent", {}).get("A", 0.0) for r in stats["results"])
+        tb = sum(r.get("spent", {}).get("B", 0.0) for r in stats["results"])
+        flags = sum(1 for r in stats["results"] if r["reason"] == "flag")
+        print(f"clock time: A {ta:.0f}s  B {tb:.0f}s  "
+              f"(saving {(tb - ta) / max(ta, 0.01) * 100:+.1f}% for A)  "
+              f"flags: {flags}")
     if args.sprt:
         print(f"SPRT: LLR {sprt_llr(wins, losses, draws):+.2f} -> {decision}")
     print(f"wall clock: {time.time() - t0:.0f}s")

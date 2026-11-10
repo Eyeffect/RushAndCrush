@@ -17,14 +17,13 @@ Usage:
 
 import argparse
 import collections
+import importlib
 import json
 import os
 import sys
 
 import chess
 import yaml
-
-from engine import Engine
 
 
 def load_blunders(path: str) -> list[dict]:
@@ -65,6 +64,8 @@ def main() -> None:
                     default=os.path.join(here, "data", "blunders.jsonl"))
     ap.add_argument("--config", default=os.path.join(here, "config.yml"))
     ap.add_argument("--nodes", type=int, default=8000)
+    ap.add_argument("--engine", default="engine",
+                    help="engine module to replay against (e.g. engine_cand)")
     ap.add_argument("--strict", type=float, default=None,
                     help="exit 1 if still-played rate exceeds this %%")
     args = ap.parse_args()
@@ -78,7 +79,8 @@ def main() -> None:
         return
 
     params = load_params(args.config)
-    engine = Engine({"max_nodes": args.nodes})
+    engine_cls = getattr(importlib.import_module(args.engine), "Engine")
+    engine = engine_cls({"max_nodes": args.nodes})
 
     still_played = 0
     checked = 0
@@ -97,8 +99,8 @@ def main() -> None:
             continue  # ledger entry from a differently-keyed position
         checked += 1
 
-        keys = {Engine._tt_key(board): 1}
-        board_key = Engine._tt_key(board)
+        keys = {engine_cls._tt_key(board): 1}
+        board_key = engine_cls._tt_key(board)
         best = engine.search(board.copy(stack=False), 120.0, params,
                              rep_keys=dict(keys))
         if best["move"] is None:
