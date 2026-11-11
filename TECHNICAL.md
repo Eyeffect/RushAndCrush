@@ -747,7 +747,11 @@ gene-evolution fitness signal is now a rating-gap z-score of
 opening book is position-keyed with opponent-strength weighting and a
 sample-gated deep range (§5.5). Q2 (verify-then-trust pondering) is
 deprioritized per review: a fresh search against a hot TT is already
-cheap.*
+cheap. The review is **closed** as of Nov 11 evening: 9 of the 10 ranked
+proposals landed; proposal #10's text was never archived, and the
+remaining threads (SEE/qsearch checks, Texel tuning at ~200–300 games,
+blunder-cause separation, takeback/draw-offer handling) stay parked in
+§8 while the bot banks games for the z-score evolution and deep book.*
 
 1. Highest-leverage strength steps from here, given the ~1500–1550
    level and the pure-Python constraint: SEE for qsearch, better delta
