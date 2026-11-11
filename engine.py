@@ -17,6 +17,7 @@ prefers attacking among equal options but never trades a piece for a
 pawn storm that "looks even".
 """
 
+import itertools
 import math
 import random
 import threading
@@ -30,6 +31,7 @@ MATE_BOUND = MATE - 10_000  # scores beyond this are mate-in-N; stored ply-adjus
 INF = 10_000_000
 TT_MAX = 500_000  # transposition table entries before it is pensioned off
 CAP = 150  # soft cap (cp) on per-piece persona bonus: material + CAP max
+FUTILITY_MARGIN = 110  # cp per ply: how much a free move could still gain
 
 PIECE_VALUE = {
     chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330,
@@ -732,20 +734,36 @@ class Engine:
                     if flag == 2 and e_score <= alpha:
                         return e_score
 
-            # one movegen per node (was three: is_checkmate + is_stalemate
-            # + the move loop each walked the legal moves)
-            legal = list(board.legal_moves)
-            if not legal:
-                return -MATE + ply if board.is_check() else 0
+            # staged movegen: we only PEEK at the legal moves here - one
+            # move is enough to know the position is not mate/stalemate.
+            # The rest are generated later, and only if the capture stage
+            # actually needs them.
+            legal_iter = iter(board.legal_moves)
+            first_legal = next(legal_iter, None)
+            # one check test per node: is_check() is not free, and the
+            # answer cannot change until we push a move
+            in_check = board.is_check()
+            if first_legal is None:
+                return -MATE + ply if in_check else 0
             if depth <= 0:
                 return self._quiesce(board, alpha, beta, ply, P)
+
+            # --- futility pruning: in the last plies, a position so
+            # hopeless that even a free move would not come close to beta
+            # holds nothing worth searching - take the static eval.
+            # Skipped in check and at mate scores.
+            if (depth <= 2 and not in_check
+                    and -MATE_BOUND < beta < MATE_BOUND):
+                static = self.evaluate(board, P)
+                if static - FUTILITY_MARGIN * depth >= beta:
+                    return static
 
             # --- null-move pruning: hand the opponent a free move; if we
             # STILL beat beta, the real position is almost surely winning.
             # Skipped in check, at mate scores, and in pawn-only endings
             # (zugzwang is for lesser soldiers, but let's not gamble).
             if (can_null and depth >= 3 and -900_000 < beta < 900_000
-                    and not board.is_check()
+                    and not in_check
                     and board.occupied_co[board.turn] & ~board.pawns & ~board.kings
                     and self.evaluate(board, P) >= beta):
                 board.push(chess.Move.null())
@@ -755,15 +773,57 @@ class Engine:
                 if score >= beta:
                     return beta
 
-            legal.sort(key=lambda m: self._order(board, m, tt_move, ply),
-                       reverse=True)
+            # --- staged movegen: the capture stage goes first, and the
+            # quiet moves are generated only if the capture stage fails to
+            # raise beta. A capture cutoff means the quiet moves would
+            # never be searched - so we do not pay for them.
+            cap_moves = list(board.generate_legal_captures())
+            # quiet promotions are tactical too: a pawn about to crown
+            # is exactly the kind of thing the horizon hides
+            if board.turn == chess.WHITE:
+                promo_from = (board.pawns & board.occupied_co[chess.WHITE]
+                              & chess.BB_RANK_7)
+                promo_to = chess.BB_RANK_8
+            else:
+                promo_from = (board.pawns & board.occupied_co[chess.BLACK]
+                              & chess.BB_RANK_2)
+                promo_to = chess.BB_RANK_1
+            if promo_from:
+                # quiet promotions only: a capture-promotion is already in
+                # the capture stage (searching it twice is wasted work)
+                cap_moves.extend(m for m in board.generate_legal_moves(promo_from, promo_to)
+                                 if not board.is_capture(m))
+            cap_moves.sort(key=lambda m: self._capture_score(board, m)
+                           + (500 if m.promotion else 0), reverse=True)
+            if tt_move is not None:
+                # the TT move is legal by construction (the key is exact:
+                # same pieces, turn, castling, en-passant) and takes the
+                # full PVS window, so it goes first
+                cap_moves = [m for m in cap_moves if m != tt_move]
+                cap_moves.insert(0, tt_move)
+            staged = cap_moves
 
             best_score = -INF
             best_move = None
             old_alpha = alpha
-            in_check = board.is_check()
             move_idx = 0
-            for move in legal:
+            stage = 0
+            while True:
+                if move_idx >= len(staged):
+                    if stage:
+                        break
+                    # the capture stage did not cut: now we pay for the
+                    # quiet moves (generate + order them) and carry on
+                    stage = 1
+                    quiet = [m for m in itertools.chain((first_legal,),
+                                                        legal_iter)
+                             if not board.is_capture(m) and not m.promotion
+                             and m != tt_move]
+                    quiet.sort(key=lambda m: self._order(board, m, None, ply),
+                               reverse=True)
+                    staged.extend(quiet)
+                    continue
+                move = staged[move_idx]
                 is_quiet = not (board.is_capture(move) or move.promotion)
                 board.push(move)
                 new_depth = depth - 1
@@ -884,7 +944,10 @@ class Engine:
             promo_from = board.pawns & board.occupied_co[chess.BLACK] & chess.BB_RANK_2
             promo_to = chess.BB_RANK_1
         if promo_from:
-            moves.extend(board.generate_legal_moves(promo_from, promo_to))
+            # quiet promotions only: capture-promotions are already in the
+            # capture list (they used to be searched twice)
+            moves.extend(m for m in board.generate_legal_moves(promo_from, promo_to)
+                         if not board.is_capture(m))
         moves.sort(key=lambda m: self._capture_score(board, m)
                    + (500 if m.promotion else 0), reverse=True)
 

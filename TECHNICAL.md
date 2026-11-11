@@ -252,6 +252,30 @@ search, so a fresh dict invalidates it. Cleared every search.
   costs nothing and buys clock. A "stop when the best move looks stable"
   variant was written and **rejected**: it needs depth ≥ 8, which
   production budgets never reach, so it was unmeasurable and stayed out.
+- **Futility pruning + one `is_check()` per node (Batch C #4):** at depth
+  ≤ 2 a position so far below beta that no free move could save it is
+  cut immediately, and the three `is_check()` calls per node collapsed
+  into one. Speed: ~8.6k → ~14k nps on PyPy at equal node counts.
+  Fixed-time strength is even (+22 ± 121 for the old engine over 32
+  games) — the gain is pure speed, which pays off only in the clock
+  regime (see #5).
+- **Staged movegen (Batch C #5):** each node peeks one legal move for
+  the mate/stalemate test, then generates captures first (plus quiet
+  promotions, deduplicated against capture-promotions — a pre-existing
+  qsearch bug that searched each capture-promotion twice) and builds
+  the quiet list only if the capture stage fails to cut. Speed:
+  ~8.6k → ~19.5k nps (2.27× baseline). Movegen coverage verified
+  exactly (399 random positions, `verify_movegen.py`). Measured in the
+  production clock regime (180s bank, 2% policy): **Elo −145 ± 107 for
+  the old engine over 48 games** — the largest measured gain so far,
+  shipped with #4 as one package.
+- **Lesson from the 30–0 sweep:** the first staged-movegen draft
+  double-incremented the move counter, so the first move never got the
+  full PVS window; in quiet positions every move failed low and
+  `best_move` was picked among meaningless scout upper bounds → the
+  candidate lost every game by mate. The blunder replay did NOT catch
+  it (in tactical positions the first move beats alpha and re-searches
+  exactly) — the full match did. Gate on matches, not on the replay.
 - **Aspiration on beta only**: `beta = best_score + 40` from depth ≥ 3;
   a fail-high re-searches the same depth with an infinite window (exact
   scores are what the style layer needs).
@@ -694,11 +718,12 @@ either number is suspect regardless of what the Elo match says.
 proposals. Landed: style pre-roll (#1), clock-aware move retries +
 measured POST overhead (#8), doc-truth + history-aging (#9), the
 measurement layer (#2) — `match.py` self-play harness with Elo/SPRT
-plus the `replay_blunders.py` regression suite (§5.7) — and **#3 (soft
-time limits)**, shipped after a measured win in the blitz-clock
-harness (§5.1). #4 (pruning) and #5 (staged movegen) are in progress
-under the same gate. Q2 (verify-then-trust pondering) is deprioritized
-per review: a fresh search against a hot TT is already cheap.*
+plus the `replay_blunders.py` regression suite (§5.7) — **#3 (soft
+time limits)** and **#4 + #5 (futility pruning, single `is_check()`,
+staged movegen)**, the latter shipped after a measured **Elo −145 ± 107**
+win in the production clock regime (§5.1). Q2 (verify-then-trust
+pondering) is deprioritized per review: a fresh search against a hot
+TT is already cheap.*
 
 1. Highest-leverage strength steps from here, given the ~1500–1550
    level and the pure-Python constraint: SEE for qsearch, better delta
