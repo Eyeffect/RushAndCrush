@@ -303,6 +303,142 @@ def test_seeded_repertoire(tmp="data_test"):
     print("[ok] learning: seeded repertoire plays immediately, dies by results")
 
 
+def test_book_transposition(tmp="data_test"):
+    """#7: the book is keyed by POSITION, not move prefix - a line learned
+    in one move order must fire in a transposed order of the same moves."""
+    from learning import Learner
+    shutil.rmtree(f"{tmp}/tp", ignore_errors=True)
+    lr = Learner(f"{tmp}/tp/learning.json",
+                 {"book_depth": 8, "book_min_samples": 2, "window": 10})
+    # learn ...Nf3 answered by Bb5 after 1.e4 e5 (2 wins)
+    for _ in range(2):
+        lr.report_game("win", "mate",
+                       ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5"], True, "X")
+    # same position reached in a different order: 1.Nf3 Nc6 2.e4 e5
+    got = lr.get_book_move(["g1f3", "b8c6", "e2e4", "e7e5"], True)
+    assert got == "f1b5", f"transposition should share samples, got {got}"
+    print("[ok] learning: book is position-keyed (transposition found)")
+
+
+def test_book_strength_weighting(tmp="data_test"):
+    """#7: results are weighted by opponent strength. Two moves with equal
+    RAW records - the one earned against stronger opposition ranks first,
+    even when alphabetical tie-breaks would pick the other."""
+    from learning import Learner
+    shutil.rmtree(f"{tmp}/wgt", ignore_errors=True)
+    lr = Learner(f"{tmp}/wgt/learning.json",
+                 {"book_depth": 8, "book_min_samples": 2, "window": 10})
+    # Bb5: 2 wins vs 2400-rated bots, 1 loss vs a 1000 bot (weight 1.75/1.0)
+    for res, opp in (("win", 2400), ("win", 2400), ("loss", 1000)):
+        lr.report_game(res, "mate", ["e2e4", "e7e5", "f1c4"], True, "X",
+                       opp_rating=opp, my_rating=1600)
+    # Nf3: the same 2W/1L, but all against 1000-rated bots (weight 1.0)
+    for res in ("win", "win", "loss"):
+        lr.report_game(res, "resign", ["e2e4", "e7e5", "g1f3"], True, "Y",
+                       opp_rating=1000, my_rating=1600)
+    got = lr.get_book_move(["e2e4", "e7e5"], True)
+    assert got == "f1c4", f"strong-field record should win, got {got}"
+    print("[ok] learning: book results weighted by opponent strength")
+
+
+def test_book_deep_plies(tmp="data_test"):
+    """#7: the book reaches past its old 8-ply ceiling, but only follows a
+    deep move once the sample size earns it (book_deep_min_samples)."""
+    from learning import Learner
+    shutil.rmtree(f"{tmp}/deep", ignore_errors=True)
+    lr = Learner(f"{tmp}/deep/learning.json",
+                 {"book_depth": 8, "book_min_samples": 2,
+                  "book_deep_min_samples": 3, "window": 10})
+    line = ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5a4",
+            "g8f6", "e1g1"]
+    lr.report_game("win", "mate", line, True, "X")
+    # ply 8 (castle) is past the core depth: 1 sample is not enough
+    assert lr.get_book_move(line[:8], True) is None, \
+        "deep book move trusted on 1 sample"
+    for _ in range(2):
+        lr.report_game("win", "mate", line, True, "X")
+    got = lr.get_book_move(line[:8], True)
+    assert got == "e1g1", f"3 samples should unlock the deep move, got {got}"
+    print("[ok] learning: deep book gated by book_deep_min_samples")
+
+
+def test_book_migration(tmp="data_test"):
+    """#7: an old move-prefix book re-keys itself to positions on boot and
+    its lookups keep working."""
+    import json as _json
+    import os as _os
+    from learning import Learner
+    shutil.rmtree(f"{tmp}/mig", ignore_errors=True)
+    _os.makedirs(f"{tmp}/mig", exist_ok=True)
+    path = f"{tmp}/mig/learning.json"
+    with open(path, "w", encoding="utf-8") as f:
+        _json.dump({"book": {"e2e4 e7e5": {"next": {
+            "g1f3": {"w": 2, "l": 0, "d": 0}}}}}, f)
+    lr = Learner(path, {"book_depth": 8, "book_min_samples": 2})
+    got = lr.get_book_move(["e2e4", "e7e5"], True)
+    assert got == "g1f3", f"migrated book lost its line, got {got}"
+    with open(path, encoding="utf-8") as f:
+        keys = list(_json.load(f)["book"].keys())
+    assert keys and all(len(k) == 16 for k in keys), \
+        f"old prefix keys survived migration: {keys[:3]}"
+    print(f"[ok] learning: {len(keys)} old prefix keys migrated to positions")
+
+
+def test_zscore_evolution(tmp="data_test"):
+    """#6: gene evolution scores the window as z = sum(result - expected)
+    against the rating gap. Beating a strong field snapshots; then losing
+    to a weak field reverts to the snapshot - a raw win-rate learner would
+    see two identical 40% windows and never act."""
+    from learning import Learner
+    shutil.rmtree(f"{tmp}/z", ignore_errors=True)
+    lr = Learner(f"{tmp}/z/learning.json",
+                 {"window": 10, "freeze_until_games": 0,
+                  "book_depth": 8, "book_min_samples": 3})
+    # window 1: 4/10 vs 1900-rated bots (E[ score ] = 1.51, z = +2.2)
+    for _ in range(4):
+        lr.report_game("win", "resign", ["e2e4"], True, "StrongBot",
+                       opp_rating=1900, my_rating=1600)
+    for _ in range(6):
+        lr.report_game("loss", "resign", ["e2e4"], True, "StrongBot",
+                       opp_rating=1900, my_rating=1600)
+    snap = lr.store.load().get("snapshot")
+    assert snap and "z" in snap, "outperforming a strong field did not snapshot"
+    assert snap["z"] >= 1.0, f"snapshot z should be >= 1.0, got {snap['z']}"
+    # drag the genes away from the snapshot via a real blunder lesson
+    for _ in range(6):
+        lr.record_blunder("middlegame", 60.0, was_style_pick=True)
+    assert lr.genes()["style_pick_prob"] < snap["genes"]["style_pick_prob"]
+    # window 2: 4/10 vs 1300-rated bots (E[ score ] = 8.49, z = -3.97)
+    for _ in range(4):
+        lr.report_game("win", "resign", ["e2e4"], True, "WeakBot",
+                       opp_rating=1300, my_rating=1600)
+    for _ in range(6):
+        lr.report_game("loss", "resign", ["e2e4"], True, "WeakBot",
+                       opp_rating=1300, my_rating=1600)
+    assert lr.genes()["style_pick_prob"] == snap["genes"]["style_pick_prob"], \
+        "1.5+ sigma underperformance should revert to the snapshot"
+    print(f"[ok] learning: z-score evolution (snap z={snap['z']:.2f}, "
+          "underperformance reverted to snapshot)")
+
+
+def test_evolution_raw_fallback(tmp="data_test"):
+    """#6: without ratings the learner still evolves on raw win rate (the
+    old path) - 6/10 snapshots, and no ratings never means no evolution."""
+    from learning import Learner
+    shutil.rmtree(f"{tmp}/raw", ignore_errors=True)
+    lr = Learner(f"{tmp}/raw/learning.json",
+                 {"window": 10, "freeze_until_games": 0,
+                  "book_depth": 8, "book_min_samples": 3})
+    for _ in range(6):
+        lr.report_game("win", "resign", ["e2e4"], True, "X")
+    for _ in range(4):
+        lr.report_game("loss", "resign", ["e2e4"], True, "Y")
+    snap = lr.store.load().get("snapshot")
+    assert snap and "wr" in snap and "z" not in snap, \
+        f"raw window should snapshot on wr only, got {snap}"
+    print("[ok] learning: ratingless windows fall back to raw win rate")
+
+
 def test_ponder_yields():
     """A ponder search warms the TT and yields instantly to a real search."""
     eng = Engine({"min_time": 0.1, "max_time": 2.0})
@@ -566,6 +702,12 @@ if __name__ == "__main__":
     test_chat_pools()
     test_learning_book()
     test_seeded_repertoire()
+    test_book_transposition()
+    test_book_strength_weighting()
+    test_book_deep_plies()
+    test_book_migration()
+    test_zscore_evolution()
+    test_evolution_raw_fallback()
     test_learning_genes()
     test_ponder_yields()
     test_game_handler_end_to_end()

@@ -230,6 +230,9 @@ learning:
   enabled: true
   book_depth: 8          # plies of opening we memorize and grade by results
   book_min_samples: 3    # a book line needs this many games before we trust it
+  book_deep_plies: 16    # book filing/lookup can reach this deep...
+  book_deep_min_samples: 5  # ...but past book_depth a move needs this many
+                            # games before we follow it out of the core book
   window: 10             # games per evolution window (snapshot / explore / revert)
   freeze_until_games: 100  # no gene evolution until this many games are logged:
                            # a 10-game window has a stderr of ~0.16, so "drops"

@@ -533,22 +533,41 @@ eval drop of the offender (for future position-level analysis).
 `king_shield += 0.05` (cap 0.5) — the only path to learning defense;
 win by mate → `king_shield −= 0.02` (floor 0).
 
-**Results-graded opening book**: for each of the first 8 plies of every
-game, key = exact move-sequence prefix, value = per-follow-up {w,l,d}
-counted with the game result. Lookup: exact key, parity must be our
-turn, follow-ups with ≥3 games and score `(w + 0.5d)/n ≥ 0.45`; best
-score wins; otherwise fall through to search (a line that only loses is
-"cursed" → the engine thinks for itself).
+**Results-graded opening book** (Batch D #7): keyed by **position**
+(zobrist hash, 16 hex digits via `chess.polyglot.zobrist_hash`), not by
+move prefix — transposed move orders pool their samples (1.e4 e5 2.Nf3
+and 1.Nf3 Nc6 2.e4 e5 are the same entry). Filing and lookup reach
+`book_deep_plies` (16); a move past the core `book_depth` (8) needs
+`book_deep_min_samples` (5) games before it is followed. Each result is
+**weighted by opponent strength**: `weight = 1 + max(0, opp − me)/800`,
+stored as `{w, l, d, pts, wgt}` with score `pts/wgt` (old raw {w,l,d}
+slots keep scoring raw; slots are converted lazily on first write).
+Lookup: position key, turn must be ours, `n ≥ min_n`, score ≥ 0.45;
+best score wins; otherwise fall through to search (a line that only
+loses is "cursed" → the engine thinks for itself). Old prefix-keyed
+books migrate on boot: each prefix is replayed on a board and re-keyed,
+unreadable ones are dropped with a warning. Seed lines are replayed
+legally now, so a corrupt seed line is skipped instead of poisoning the
+book (the old filer trusted game move lists blindly — one illegal prefix
+was found and dropped in the real data).
 
-**Window evolution** (every 10 games): win rate `wr = (W + 0.5D)/games`;
-- if `wr < snapshot.wr − 0.10` → revert genes to snapshot ("drill sergeant");
-- elif `wr ≥ 0.55` → snapshot current genes;
+**Window evolution** (every 10 games; Batch D #6): the fitness signal is
+a **z-score** of `Σ(result − expected)`, with the expected score from
+the rating gap, `expected = 1/(1 + 10^((opp − me)/400))`, and per-game
+Bernoulli variance `expected·(1 − expected)`:
+- `z ≥ +1.0` → snapshot current genes (snapshot stores `{z, wr, genes}`);
+- `z ≤ snapshot.z − 1.5` → revert genes to snapshot ("drill sergeant");
+  legacy wr-only snapshots revert on absolute `z ≤ −1.5`;
 - else mutate `style_pick_prob ±0.05` ∈ [0.05, 0.35] and
   `style_eval_slack ±10` ∈ [20, 80] (explore, with revert safety net).
-Window then resets. **Frozen until 100 games are logged**
-(`freeze_until_games: 100`): windows are recorded but evolution does not
-apply — the early population (73 games so far) is too small to trust
-with gene drift.
+The z-signal is trusted only when at least half the window's games were
+rated (with both ratings known) and the window variance is ≥ 0.5;
+otherwise the old raw path applies (`wr = (W + 0.5D)/games`; revert if
+`wr < snapshot.wr − 0.10`, snapshot if `wr ≥ 0.55`, else explore) —
+a ratingless opponent never means no evolution. Window then resets.
+**Frozen until 100 games are logged** (`freeze_until_games: 100`):
+windows are recorded but evolution does not apply — the early population
+is too small to trust with gene drift. The freeze lifted at game 103.
 
 Learning signals are coarse by design (result-level fitness, tiny param
 space); there is no gradient/Texel tuning of PSTs yet — parked until
@@ -630,8 +649,9 @@ either number is suspect regardless of what the Elo match says.
   nemesis_cooldown_min 30, played_cooldown_min 120 (every finished
   game puts the opponent on a 2h outgoing-challenge cooldown — the
   same-name spam fix), nemesis rematches bots-only and capped at 2/day.
-- `learning`: book_depth 8, book_min_samples 3, window 10,
-  freeze_until_games 100, seed_book (per-color opening repertoires).
+- `learning`: book_depth 8, book_min_samples 3, book_deep_plies 16,
+  book_deep_min_samples 5, window 10, freeze_until_games 100,
+  seed_book (per-color opening repertoires).
 
 ## 7. Observed behavior so far (~90 rated games)
 
@@ -719,11 +739,15 @@ proposals. Landed: style pre-roll (#1), clock-aware move retries +
 measured POST overhead (#8), doc-truth + history-aging (#9), the
 measurement layer (#2) — `match.py` self-play harness with Elo/SPRT
 plus the `replay_blunders.py` regression suite (§5.7) — **#3 (soft
-time limits)** and **#4 + #5 (futility pruning, single `is_check()`,
-staged movegen)**, the latter shipped after a measured **Elo −145 ± 107**
-win in the production clock regime (§5.1). Q2 (verify-then-trust
-pondering) is deprioritized per review: a fresh search against a hot
-TT is already cheap.*
+time limits)**, **#4 + #5 (futility pruning, single `is_check()`,
+staged movegen)** — shipped after a measured **Elo −145 ± 107** win in
+the production clock regime (§5.1) — and **#6 + #7 (learning)**: the
+gene-evolution fitness signal is now a rating-gap z-score of
+`Σ(result − expected)` with a raw-win-rate fallback (§5.5), and the
+opening book is position-keyed with opponent-strength weighting and a
+sample-gated deep range (§5.5). Q2 (verify-then-trust pondering) is
+deprioritized per review: a fresh search against a hot TT is already
+cheap.*
 
 1. Highest-leverage strength steps from here, given the ~1500–1550
    level and the pure-Python constraint: SEE for qsearch, better delta

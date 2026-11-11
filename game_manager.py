@@ -599,11 +599,16 @@ class GameHandler(threading.Thread):
         if hasattr(self.stores, "hunter"):
             self.stores.hunter.record_played(self.opponent)
 
-        # hand the whole battle to the learner
+        # hand the whole battle to the learner (ratings sharpen the
+        # signal: expected score + opponent-strength weighting)
         try:
+            my_rating = None
+            if hasattr(self.stores, "hunter"):
+                my_rating = getattr(self.stores.hunter, "my_rating", None)
             self.stores.learner.report_game(
                 result, status, self.game_moves,
-                self.my_color == chess.WHITE, self.opponent)
+                self.my_color == chess.WHITE, self.opponent,
+                opp_rating=self.opponent_rating, my_rating=my_rating)
             log.info("[%s] learning state: %s", self.game_id,
                      self.stores.learner.summary())
         except Exception as e:
