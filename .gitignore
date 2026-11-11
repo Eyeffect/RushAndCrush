@@ -5,6 +5,7 @@ data_test_handler/
 
 # logs and caches
 rushandcrush.log
+*.log
 __pycache__/
 *.py[cod]
 
