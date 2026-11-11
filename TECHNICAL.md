@@ -591,21 +591,27 @@ either number is suspect regardless of what the Elo match says.
 
 ## 6. Configuration surface (`config.yml`)
 
-- `engine`: min/max think time (0.35/8s), time_fraction 0.05,
+- `engine`: min/max think time (0.35/8s), time_fraction 0.02,
   `ponder` true, `ponder_max_time` 10s, `ponder_min_clock_ms` 10000.
   Network overhead is no longer configured — it is measured (§4).
+  time_fraction went 0.05 → 0.02 after measurement: the greedy policy
+  burned a whole 3+2 clock by move ~30 and 42% of games reached their
+  endgame under 1s/move; the thrifty policy flagged 0/24 harness games
+  where the greedy one flagged 12/24.
 - `persona`: aggression 0.9, style_pick_prob 0.25, style_eval_slack 45,
   resign disabled, all chat lines + cadence knobs (25s gap, 120s
   trigger cooldown, 0.35 random skip).
 - `hunter`: max_games 1, challenge_interval 60s, idle_check 15s,
   challenge_timeout_min 15, time controls, rating window 600–2200,
-  nemesis_cooldown_min 30.
+  nemesis_cooldown_min 30, played_cooldown_min 120 (every finished
+  game puts the opponent on a 2h outgoing-challenge cooldown — the
+  same-name spam fix), nemesis rematches bots-only and capped at 2/day.
 - `learning`: book_depth 8, book_min_samples 3, window 10,
   freeze_until_games 100, seed_book (per-color opening repertoires).
 
-## 7. Observed behavior so far (~73 rated games)
+## 7. Observed behavior so far (~90 rated games)
 
-- Career 34W / 37L / 5D; blitz rating 1523 → 1563 (peak, Nov 11).
+- Career 38W / 46L / 6D; blitz rating 1523 → 1584 (Nov 11).
   Opponents are online bots in the 1300–1900 range; the rating climbed
   through the Batch 1+2 period and two more wins landed right before
   the daily bot-vs-bot cap paused hunting.
